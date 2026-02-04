@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>單字學習系統 - 現代專業版</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background: #f8fafc; color: #1e293b; }
+        .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.4); }
+        .perspective-1000 { perspective: 1000px; }
+        .preserve-3d { transform-style: preserve-3d; }
+        .backface-hidden { backface-visibility: hidden; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05); }
+        .btn-hover { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 20px -5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const CONFIG = {
+            vocabApi: "https://script.google.com/macros/s/AKfycbxSj315s1y_-PEKqwMAhKAlvE_sWjEsyr4_aXW4JHdq7Lbfiw9E16bwb3w1EKmHtm63/exec",
+            resultApi: "https://script.google.com/macros/s/AKfycbwzPZZS7EqaJrcM6pdtRLlRhYm5eZPhZkXHGokmpHtREvwXeSqyDk4n4GY32ykgq7fDJQ/exec"
+        };
+
+        const MODES = {
+            1: "聽音選中文", 2: "聽音選單字", 3: "看英文選中文",
+            4: "聽力配對 (6格)", 5: "閱讀配對 (10格)"
+        };
+
+        const shuffle = (arr) => [...arr].sort(() => Math.random() - 0.5);
+        
+        // 統一英文語音
+        const speak = (txt) => { 
+            window.speechSynthesis.cancel(); 
+            const u = new SpeechSynthesisUtterance(txt); 
+            u.lang = 'en-US'; 
+            u.rate = 0.85; // 稍微放慢一點點方便聽清
+            window.speechSynthesis.speak(u); 
+        };
+
+        function App() {
+            const [currentPage, setCurrentPage] = useState('loading');
+            const [vocab, setVocab] = useState([]);
+            const [sheet, setSheet] = useState("");
+            const [user, setUser] = useState({ seat: "", name: "" });
+            const [gameConf, setGameConf] = useState(null);
+
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                const s = params.get('sheet');
+                if (!s) {
+                    Swal.fire({ icon: 'warning', title: '缺少參數', text: '網址未包含資料表名稱 (?sheet=...)', confirmButtonColor: '#6366f1'});
+                    return;
+                }
+                setSheet(s);
+                fetch(`${CONFIG.vocabApi}?sheet=${s}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.error) Swal.fire({ icon: 'error', title: '連線失敗', text: '找不到對應的資料表'});
+                        else { setVocab(data); setCurrentPage('home'); }
+                    });
+            }, []);
+
+            const handleExamEntry = async (config) => {
+                const { value: info } = await Swal.fire({
+                    title: '考生登錄',
+                    html: `<div class="flex flex-col gap-3 px-2">
+                            <input id="s-seat" type="number" class="swal2-input m-0" placeholder="您的座號">
+                            <input id="s-name" class="swal2-input m-0" placeholder="您的姓名">
+                        </div>`,
+                    confirmButtonText: '開始考試', confirmButtonColor: '#f43f5e',
+                    preConfirm: () => {
+                        const seat = document.getElementById('s-seat').value;
+                        const name = document.getElementById('s-name').value;
+                        if (!seat || !name) return Swal.showValidationMessage('請填寫完整資訊');
+                        return { seat, name };
+                    }
+                });
+
+                if (info) {
+                    const startT = new Date().toLocaleString();
+                    const modeName = MODES[config.mode];
+                    fetch(CONFIG.resultApi, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            sheet: sheet, seat: info.seat, name: info.name,
+                            start: startT, status: "考試中...", modeName: modeName
+                        })
+                    });
+                    setUser(info);
+                    setGameConf({ ...config, isExam: true, startT, modeName });
+                    setCurrentPage('game');
+                }
+            };
+
+            if (currentPage === 'loading') return (
+                <div className="h-screen flex flex-col items-center justify-center gap-4">
+                    <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                    <p className="font-bold text-slate-500 animate-pulse">正在載入學習教材...</p>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <nav className="px-6 py-4 glass sticky top-0 z-50 flex justify-between items-center shadow-sm">
+                        <div className="flex items-center gap-2" onClick={() => setCurrentPage('home')}>
+                            <div className="w-8 h-8 bg-slate-800 rounded-lg flex items-center justify-center text-white font-black text-sm">V</div>
+                            <span className="font-black text-slate-800 tracking-tight cursor-pointer">{sheet}</span>
+                        </div>
+                        {currentPage !== 'home' && (
+                            <button onClick={() => setCurrentPage('home')} className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition-all">
+                                回首頁
+                            </button>
+                        )}
+                    </nav>
+
+                    <main className="flex-1 p-6 flex flex-col items-center justify-center max-w-5xl mx-auto w-full">
+                        {currentPage === 'home' && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full">
+                                <MenuCard title="學習中心" desc="字卡與英文發音" icon="📖" color="text-slate-800" onClick={() => setCurrentPage('learning')} />
+                                <MenuCard title="自由練習" desc="不計分模擬訓練" icon="🎮" color="text-emerald-500" onClick={() => setCurrentPage('practice')} />
+                                <MenuCard title="正式考試" desc="成績將同步至雲端" icon="🎯" color="text-rose-500" onClick={() => setCurrentPage('exam_menu')} />
+                            </div>
+                        )}
+
+                        {currentPage === 'learning' && <LearningModule vocab={vocab} onBack={() => setCurrentPage('home')} />}
+                        {currentPage === 'practice' && <SetupMenu onStart={(c)=> {setGameConf({...c, isExam:false}); setCurrentPage('game');}} />}
+                        {currentPage === 'exam_menu' && <SetupMenu onStart={handleExamEntry} isExam={true} />}
+                        {currentPage === 'game' && <GameEngine engine={gameConf} data={vocab} user={user} sheet={sheet} onBack={()=>setCurrentPage('home')} />}
+                    </main>
+                </div>
+            );
+        }
+
+        const MenuCard = ({ title, desc, icon, color, onClick }) => (
+            <button onClick={onClick} className="bg-white p-8 rounded-3xl card-shadow border border-slate-100 flex flex-col items-center text-center group hover:border-slate-300 btn-hover">
+                <div className={`text-5xl mb-6 transform group-hover:scale-110 transition-transform`}>{icon}</div>
+                <h3 className={`text-xl font-black mb-2 ${color}`}>{title}</h3>
+                <p className="text-slate-400 text-sm font-medium">{desc}</p>
+            </button>
+        );
+
+        const LearningModule = ({ vocab }) => {
+            const [idx, setIdx] = useState(0);
+            const [flip, setFlip] = useState(false);
+            const cur = vocab[idx];
+
+            return (
+                <div className="flex flex-col items-center gap-6 w-full max-w-lg">
+                    {/* Progress 顯示 */}
+                    <div className="w-full px-4 font-black text-slate-400 text-[10px] tracking-[0.2em] flex justify-between items-end mb-2">
+                        <span>LEARNING PROGRESS</span>
+                        <span className="text-slate-800 text-lg">{idx + 1}<small className="text-slate-300 ml-1 font-normal">/ {vocab.length}</small></span>
+                    </div>
+                    <div className="w-full h-1 bg-slate-100 rounded-full mb-4 overflow-hidden">
+                        <div className="h-full bg-slate-800 transition-all duration-500" style={{width: `${((idx+1)/vocab.length)*100}%`}}></div>
+                    </div>
+
+                    <div className="w-full h-[500px] perspective-1000 cursor-pointer" onClick={()=>setFlip(!flip)}>
+                        <div className={`w-full h-full relative preserve-3d duration-700 transition-transform ${flip?'rotate-y-180':''}`}>
+                            {/* 正面: 純白簡約 */}
+                            <div className="absolute inset-0 backface-hidden bg-white rounded-[2.5rem] card-shadow flex flex-col items-center justify-center border-b-[6px] border-slate-200">
+                                <h2 className="text-6xl font-black text-slate-800 tracking-tighter">{cur.word}</h2>
+                                <p className="mt-8 text-slate-300 font-bold text-xs tracking-widest uppercase">Tap to reveal meaning</p>
+                            </div>
+                            
+                            {/* 背面: 深灰色業設計 */}
+                            <div className="absolute inset-0 backface-hidden rotate-y-180 bg-slate-800 rounded-[2.5rem] shadow-2xl p-8 flex flex-col text-white">
+                                <div className="flex-1 flex flex-col justify-center">
+                                    <h3 className="text-4xl font-black mb-8 text-center text-white tracking-tight">{cur.meaning}</h3>
+                                    
+                                    {/* 同反義區塊 */}
+                                    <div className="grid grid-cols-2 gap-3 mb-8">
+                                        <div className="bg-white/10 p-4 rounded-2xl">
+                                            <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest block mb-1">Synonyms</span>
+                                            <p className="text-sm font-medium">{cur.synonyms || '---'}</p>
+                                        </div>
+                                        <div className="bg-white/10 p-4 rounded-2xl">
+                                            <span className="text-[10px] font-black text-rose-300 uppercase tracking-widest block mb-1">Antonyms</span>
+                                            <p className="text-sm font-medium">{cur.antonyms || '---'}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* 例句區塊 */}
+                                    <div className="bg-black/20 p-6 rounded-2xl border border-white/5">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Example Sentence</span>
+                                        <p className="text-base leading-relaxed italic text-slate-200">"{cur.example || 'No example sentence available.'}"</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-8 mt-4">
+                        <button onClick={(e)=>{e.stopPropagation(); setIdx((idx-1+vocab.length)%vocab.length); setFlip(false);}} className="w-12 h-12 glass rounded-full flex items-center justify-center btn-hover">⬅️</button>
+                        <button onClick={(e)=>{e.stopPropagation(); speak(cur.word);}} className="w-20 h-20 bg-slate-800 text-white rounded-full shadow-xl flex items-center justify-center text-3xl btn-hover hover:scale-105 active:scale-95 transition-all">🔊</button>
+                        <button onClick={(e)=>{e.stopPropagation(); setIdx((idx+1)%vocab.length); setFlip(false);}} className="w-12 h-12 glass rounded-full flex items-center justify-center btn-hover">➡️</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const SetupMenu = ({ onStart, isExam }) => {
+            const [count, setCount] = useState(10);
+            const [mode, setMode] = useState(1);
+            return (
+                <div className="bg-white p-10 rounded-[2.5rem] card-shadow w-full max-w-xl border border-slate-100">
+                    <h2 className="text-2xl font-black text-slate-800 mb-8 text-center">{isExam?'正式測驗':'練習模式'}</h2>
+                    <div className="space-y-8">
+                        <section>
+                            <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">題數數量</label>
+                            <div className="flex gap-2 mt-3">
+                                {[10, 20, 30, 50].map(n => (
+                                    <button key={n} onClick={()=>setCount(n)} className={`flex-1 py-3 rounded-xl font-bold transition-all ${count===n?'bg-slate-800 text-white':'bg-slate-50 text-slate-400'}`}>{n}</button>
+                                ))}
+                            </div>
+                        </section>
+                        <section>
+                            <label className="text-xs font-black uppercase tracking-widest text-slate-400 ml-1">測驗類型</label>
+                            <div className="grid grid-cols-1 gap-2 mt-3">
+                                {Object.entries(MODES).map(([id, n])=>(
+                                    <button key={id} onClick={()=>setMode(Number(id))} className={`p-4 rounded-xl text-sm font-black border-2 transition-all text-left flex justify-between ${mode===Number(id)?'border-slate-800 bg-slate-50 text-slate-800':'border-transparent bg-slate-50 text-slate-400'}`}>
+                                        {n} {mode===Number(id) && "●"}
+                                    </button>
+                                ))}
+                            </div>
+                        </section>
+                        <button onClick={()=>onStart({count, mode})} className={`w-full py-5 rounded-2xl font-black text-white text-lg btn-hover ${isExam?'bg-rose-500':'bg-slate-800'}`}>
+                            進入{isExam?'挑戰':'學習'}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const GameEngine = ({ engine, data, user, sheet, onBack }) => {
+            const [qs, setQs] = useState([]);
+            const [cur, setCur] = useState(0);
+            const [score, setScore] = useState(0);
+            const [sec, setSec] = useState(0);
+            const [finished, setFinished] = useState(false);
+            const [matches, setMatches] = useState([]);
+            const [sel, setSel] = useState(null);
+            const timer = useRef();
+
+            useEffect(() => {
+                const pool = shuffle(data).slice(0, engine.count);
+                if (engine.mode === 4 || engine.mode === 5) {
+                    const size = engine.mode === 4 ? 3 : 5;
+                    let mQs = [];
+                    for(let i=0; i<pool.length; i+=size) {
+                        const batch = pool.slice(i, i+size);
+                        mQs.push({ cards: shuffle([
+                            ...batch.map(v => ({ id: v.word+'_Q', val: v.word, disp: engine.mode===4?'🔊':v.word, type:'Q' })),
+                            ...batch.map(v => ({ id: v.word+'_A', val: v.word, disp: v.meaning, type:'A' }))
+                        ])});
+                    }
+                    setQs(mQs);
+                } else {
+                    setQs(pool.map(t => ({
+                        target: t,
+                        opts: shuffle([t, ...shuffle(data.filter(d=>d.word!==t.word)).slice(0,3)])
+                    })));
+                }
+                timer.current = setInterval(()=>setSec(s=>s+1), 1000);
+                return () => clearInterval(timer.current);
+            }, []);
+
+            const onFinish = async (fScore) => {
+                clearInterval(timer.current);
+                setFinished(true);
+                if (engine.isExam) {
+                    Swal.fire({ title: '上傳紀錄中', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+                    try {
+                        await fetch(CONFIG.resultApi, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                sheet, seat: user.seat, name: user.name,
+                                start: engine.startT, end: new Date().toLocaleString(),
+                                duration: sec, modeName: engine.modeName,
+                                score: fScore, total: qs.length, 
+                                finalScore: Math.round(fScore/qs.length*100),
+                                status: "已完成 (Verified)"
+                            })
+                        });
+                        Swal.fire({ icon: 'success', title: '完成', text: '成績已成功存檔', timer: 1500 });
+                    } catch (e) { Swal.fire('同步失敗', '請截圖成績告知老師', 'error'); }
+                }
+            };
+
+            const handleAns = (isOk) => {
+                if (isOk) { setScore(s => s + 1); if(cur < qs.length-1) setCur(c=>c+1); else onFinish(score + 1); }
+                else {
+                    Swal.fire({ icon:'error', title:'正確答案', text: qs[cur].target.meaning, timer: 1200, showConfirmButton: false });
+                    setTimeout(() => { if(cur < qs.length-1) setCur(c=>c+1); else onFinish(score); }, 1300);
+                }
+            };
+
+            const handleMatch = (card) => {
+                if(card.disp==='🔊') speak(card.val);
+                if(matches.includes(card.id) || sel?.id === card.id) return;
+                if(!sel) setSel(card);
+                else {
+                    if(sel.val === card.val && sel.type !== card.type) {
+                        const newM = [...matches, sel.id, card.id];
+                        setMatches(newM); setSel(null);
+                        if(newM.length === qs[cur].cards.length) {
+                            setScore(s => s + 1);
+                            setTimeout(() => { setMatches([]); if(cur < qs.length-1) setCur(c=>c+1); else onFinish(score + 1); }, 500);
+                        }
+                    } else { setSel(null); }
+                }
+            };
+
+            if (finished) return (
+                <div className="bg-white p-12 rounded-[3rem] shadow-2xl text-center max-w-sm w-full border border-slate-100">
+                    <h2 className="text-2xl font-black text-slate-800">測驗結果</h2>
+                    <div className="my-8">
+                        <div className="text-7xl font-black text-slate-800">{Math.round(score/qs.length*100)}</div>
+                        <p className="text-slate-400 font-bold mt-2 uppercase tracking-[0.3em] text-[10px]">Points Score</p>
+                    </div>
+                    <button onClick={onBack} className="w-full py-4 bg-slate-800 text-white rounded-xl font-black btn-hover">確認並返回</button>
+                </div>
+            );
+
+            if(!qs[cur]) return null;
+            const q = qs[cur];
+            const isMatch = !!q.cards;
+
+            return (
+                <div className="w-full max-w-2xl flex flex-col items-center">
+                    <div className="w-full flex justify-between mb-4 px-4 font-black text-slate-400 text-[10px] tracking-widest">
+                        <span>QUESTION {cur+1}/{qs.length}</span>
+                        <span>ELAPSED {sec}S</span>
+                    </div>
+                    <div className="w-full h-1 bg-slate-100 rounded-full mb-12 overflow-hidden">
+                        <div className="h-full bg-slate-800 transition-all duration-500" style={{width: `${((cur+1)/qs.length)*100}%`}}></div>
+                    </div>
+
+                    {!isMatch ? (
+                        <div className="w-full space-y-4">
+                            <div className="bg-white p-16 rounded-[2.5rem] card-shadow text-center">
+                                {engine.mode <= 2 && <button onClick={()=>speak(q.target.word)} className="text-6xl mb-6 hover:scale-105 transition-transform block mx-auto">🔊</button>}
+                                <h2 className="text-4xl font-black text-slate-800 tracking-tight">
+                                    {engine.mode === 3 ? q.target.word : (engine.mode <= 2 ? 'Listen' : '')}
+                                </h2>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {q.opts.map((o,i)=>(
+                                    <button key={i} onClick={()=>handleAns(o.word===q.target.word)} className="p-6 bg-white rounded-2xl card-shadow font-bold text-slate-600 hover:bg-slate-800 hover:text-white transition-all">
+                                        {engine.mode === 2 ? o.word : o.meaning}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 gap-3 w-full">
+                            {q.cards.map(c=>(
+                                <button key={c.id} onClick={()=>handleMatch(c)} className={`p-6 h-28 rounded-2xl font-black transition-all flex items-center justify-center text-center ${matches.includes(c.id)?'bg-slate-50 opacity-0 pointer-events-none':sel?.id===c.id?'bg-slate-100 ring-4 ring-slate-800 text-slate-800':'bg-white card-shadow text-slate-500 hover:border-slate-300 border-2 border-transparent'}`}>
+                                    {c.disp==='🔊' ? <span className="text-4xl">🔊</span> : <span className="text-sm">{c.disp}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
